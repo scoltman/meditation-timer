@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Meditation Timer</title>
+  </head>
+  <body>
+    <h2>Time For Meditation</h2>
+    <div id="count">0</div>
+    <p id="times">
+      <span>10</span>
+      <span>20</span>
+      <span>30</span>
+      <span>40</span>
+      <span>50</span>
+      <span>60</span>
+    </p>
+    <input type="number" id="lengt" value="2">
+    <button id="start">Start</button>
+    <script type="text/javascript">
+    document.addEventListener("DOMContentLoaded", function() {
+
+      var times = document.getElementById('times');
+      var start = document.getElementById('start');
+      var lengt = document.getElementById('lengt');
+      var count = document.getElementById('count');
+
+      var play = false;
+      var remainingTime = 0;
+
+      var introAudio = document.createElement('audio');
+      var outroAudio = document.createElement('audio');
+
+      times.addEventListener('click',function(e){
+        lengt.value = e.target.innerHTML;
+      }, );
+
+      if (introAudio.canPlayType('audio/mpeg')) {
+          introAudio.setAttribute('src','med-intro.mp3');
+          outroAudio.setAttribute('src','med-outro.mp3');
+      }
+
+      setInterval(function(){
+        var seconds;
+        var minutes
+        var displayTime = remainingTime;
+
+        if(remainingTime > 0){
+          remainingTime = remainingTime - 1000;
+          seconds = (remainingTime / 1000);
+          minutes = Math.floor((seconds / 60));
+          seconds = seconds - (minutes * 60);
+          displayTime = minutes + ':' + seconds;
+        }
+        count.innerHTML = displayTime;
+      },1000)
+
+      start.addEventListener('click',function(e){
+        var timer;
+        var time = parseInt(lengt.value,10) * 60000;
+        if(!play) {
+          introAudio.play();
+          play = true;
+          start.innerHTML = 'stop';
+          timer = setTimeout(function(){
+            outroAudio.play();
+          }, time - 23000);
+          remainingTime = time;
+        } else {
+          introAudio.pause();
+          outroAudio.pause();
+          introAudio.currentTime = 0;
+          outroAudio.currentTime = 0;
+          play = false;
+          start.innerHTML = 'start';
+          clearTimeout(timer);
+          remainingTime = 0;
+        }
+      });
+
+    });
+    </script>
+  </body>
+</html>
