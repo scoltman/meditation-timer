@@ -1,84 +1,253 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>Meditation Timer</title>
-  </head>
-  <body>
-    <h2>Time For Meditation</h2>
-    <div id="count">0</div>
-    <p id="times">
-      <span>10</span>
-      <span>20</span>
-      <span>30</span>
-      <span>40</span>
-      <span>50</span>
-      <span>60</span>
-    </p>
-    <input type="number" id="lengt" value="2">
-    <button id="start">Start</button>
-    <script type="text/javascript">
-    document.addEventListener("DOMContentLoaded", function() {
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Meditation Timer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-      var times = document.getElementById('times');
-      var start = document.getElementById('start');
-      var lengt = document.getElementById('lengt');
-      var count = document.getElementById('count');
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 40px;
+      padding: 32px 24px;
+      user-select: none;
+    }
 
-      var play = false;
-      var remainingTime = 0;
+    h1 {
+      font-size: 0.75rem;
+      font-weight: 400;
+      letter-spacing: 0.4em;
+      text-transform: uppercase;
+      opacity: 0.4;
+    }
 
-      var introAudio = document.createElement('audio');
-      var outroAudio = document.createElement('audio');
+    #timer-display {
+      font-size: 4.5rem;
+      font-weight: 200;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.04em;
+      color: #e6edf3;
+    }
 
-      times.addEventListener('click',function(e){
-        lengt.value = e.target.innerHTML;
-      }, );
+    .duration-options {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
 
-      if (introAudio.canPlayType('audio/mpeg')) {
-          introAudio.setAttribute('src','med-intro.mp3');
-          outroAudio.setAttribute('src','med-outro.mp3');
+    .dur-btn {
+      padding: 7px 16px;
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,0.15);
+      background: transparent;
+      color: #8b949e;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+    }
+    .dur-btn.selected {
+      border-color: rgba(255,255,255,0.45);
+      color: #e6edf3;
+      background: rgba(255,255,255,0.06);
+    }
+    .dur-btn:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+
+    #start-btn {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: transparent;
+      color: rgba(255,255,255,0.6);
+      font-size: 0.8rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: border-color 0.3s, color 0.3s;
+    }
+    #start-btn:active { background: rgba(255,255,255,0.07); }
+
+    #wake-status {
+      font-size: 0.72rem;
+      color: #8b949e;
+      text-align: center;
+      min-height: 1em;
+      transition: color 0.3s;
+    }
+    #wake-status.warn { color: #d29922; }
+  </style>
+</head>
+<body>
+  <h1>Meditation Timer</h1>
+
+  <div id="timer-display">0:00</div>
+
+  <div class="duration-options">
+    <button class="dur-btn" data-min="10">10m</button>
+    <button class="dur-btn selected" data-min="20">20m</button>
+    <button class="dur-btn" data-min="30">30m</button>
+    <button class="dur-btn" data-min="40">40m</button>
+    <button class="dur-btn" data-min="50">50m</button>
+    <button class="dur-btn" data-min="60">60m</button>
+  </div>
+
+  <button id="start-btn">Start</button>
+
+  <div id="wake-status"></div>
+
+  <script>
+    // How far before the end to start the outro (matches audio length)
+    const OUTRO_LEAD_MS = 23000;
+
+    const timerDisplay = document.getElementById('timer-display');
+    const startBtn     = document.getElementById('start-btn');
+    const wakeStatus   = document.getElementById('wake-status');
+    const durBtns      = document.querySelectorAll('.dur-btn');
+
+    const introAudio = new Audio('med-intro.mp3');
+    const outroAudio = new Audio('med-outro.mp3');
+
+    let selectedMs  = 20 * 60 * 1000;
+    let running     = false;
+    let startTime   = null;
+    let tickInterval = null;
+    let outroTimeout = null;
+    let outroFired  = false;
+    let wakeLock    = null;
+
+    // ── Duration buttons ──────────────────────────────────────────────────────
+    durBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (running) return;
+        durBtns.forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedMs = parseInt(btn.dataset.min, 10) * 60 * 1000;
+      });
+    });
+
+    // ── Wake Lock ─────────────────────────────────────────────────────────────
+    async function acquireWakeLock() {
+      if (!('wakeLock' in navigator)) {
+        setWakeStatus('Keep this screen open — it cannot auto-lock on this browser', true);
+        return;
+      }
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        setWakeStatus('Screen will stay on for your session');
+        wakeLock.addEventListener('release', () => {
+          wakeLock = null;
+          if (running) setWakeStatus('Screen lock active — timer may not complete if locked', true);
+        });
+      } catch {
+        setWakeStatus('Could not prevent sleep — keep screen on manually', true);
+      }
+    }
+
+    function releaseWakeLock() {
+      wakeLock?.release();
+      wakeLock = null;
+      setWakeStatus('');
+    }
+
+    function setWakeStatus(msg, warn = false) {
+      wakeStatus.textContent = msg;
+      wakeStatus.classList.toggle('warn', warn);
+    }
+
+    // ── On-wake recovery ──────────────────────────────────────────────────────
+    // If the screen locked briefly and JS was suspended, catch up on resume.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || !running) return;
+
+      // Re-acquire wake lock if it was dropped while hidden
+      if (!wakeLock) acquireWakeLock();
+
+      const remaining = selectedMs - (Date.now() - startTime);
+
+      if (!outroFired && remaining <= OUTRO_LEAD_MS) {
+        clearTimeout(outroTimeout);
+        triggerOutro();
+      }
+      if (remaining <= 0) {
+        stopTimer(true);
+      }
+    });
+
+    // ── Timer ─────────────────────────────────────────────────────────────────
+    function formatTime(ms) {
+      const total = Math.max(0, Math.ceil(ms / 1000));
+      const m = Math.floor(total / 60);
+      const s = total % 60;
+      return m + ':' + String(s).padStart(2, '0');
+    }
+
+    function tick() {
+      const remaining = selectedMs - (Date.now() - startTime);
+      timerDisplay.textContent = formatTime(remaining);
+      if (remaining <= 0) stopTimer(true);
+    }
+
+    function triggerOutro() {
+      outroAudio.play().catch(() => {});
+      outroFired = true;
+    }
+
+    function startTimer() {
+      // Prime outroAudio during this user gesture so deferred play works on iOS
+      outroAudio.play().then(() => outroAudio.pause()).catch(() => {});
+
+      startTime  = Date.now();
+      outroFired = false;
+      running    = true;
+
+      introAudio.currentTime = 0;
+      introAudio.play().catch(() => {});
+
+      startBtn.textContent = 'Stop';
+      durBtns.forEach(b => b.disabled = true);
+
+      acquireWakeLock();
+
+      tick();
+      tickInterval = setInterval(tick, 500);
+      outroTimeout = setTimeout(triggerOutro, selectedMs - OUTRO_LEAD_MS);
+    }
+
+    function stopTimer(completed = false) {
+      running = false;
+      clearInterval(tickInterval);
+      clearTimeout(outroTimeout);
+      releaseWakeLock();
+
+      if (!completed) {
+        introAudio.pause();
+        introAudio.currentTime = 0;
+        outroAudio.pause();
+        outroAudio.currentTime = 0;
       }
 
-      setInterval(function(){
-        var seconds;
-        var minutes
-        var displayTime = remainingTime;
+      timerDisplay.textContent = '0:00';
+      startBtn.textContent = 'Start';
+      durBtns.forEach(b => b.disabled = false);
+    }
 
-        if(remainingTime > 0){
-          remainingTime = remainingTime - 1000;
-          seconds = (remainingTime / 1000);
-          minutes = Math.floor((seconds / 60));
-          seconds = seconds - (minutes * 60);
-          displayTime = minutes + ':' + seconds;
-        }
-        count.innerHTML = displayTime;
-      },1000)
-
-      start.addEventListener('click',function(e){
-        var timer;
-        var time = parseInt(lengt.value,10) * 60000;
-        if(!play) {
-          introAudio.play();
-          play = true;
-          start.innerHTML = 'stop';
-          timer = setTimeout(function(){
-            outroAudio.play();
-          }, time - 23000);
-          remainingTime = time;
-        } else {
-          introAudio.pause();
-          outroAudio.pause();
-          introAudio.currentTime = 0;
-          outroAudio.currentTime = 0;
-          play = false;
-          start.innerHTML = 'start';
-          clearTimeout(timer);
-          remainingTime = 0;
-        }
-      });
-
+    startBtn.addEventListener('click', () => {
+      running ? stopTimer(false) : startTimer();
     });
-    </script>
-  </body>
+  </script>
+</body>
 </html>
